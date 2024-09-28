@@ -1,44 +1,57 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from tkcalendar import DateEntry
 import pandas as pd
 import numpy as np
-from scipy.signal import savgol_filter, find_peaks
-from fpdf import FPDF  # Instala con: pip install fpdf
+from scipy.signal import savgol_filter
+from fpdf import FPDF
 
 class RFAnalyzerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("RF Signal Analyzer")
         self.files = []
+        self.data = pd.DataFrame()
 
         # Crear el marco principal
         main_frame = tk.Frame(root)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         # Crear el panel izquierdo de color negro
-        left_panel = tk.Frame(main_frame, bg="black", width=200)
+        left_panel = tk.Frame(main_frame, bg="black", width=250)
         left_panel.pack(side=tk.LEFT, fill=tk.Y)
 
+        # Centrar los elementos en el panel izquierdo
+        left_panel_inner = tk.Frame(left_panel, bg="black")
+        left_panel_inner.pack(expand=True)
+
         # Crear botones en el panel izquierdo
-        self.open_button = tk.Button(left_panel, text="Abrir Archivos CSV", command=self.open_files, bg="gray", fg="white")
-        self.open_button.pack(pady=10, padx=10, fill=tk.X)
+        self.open_button = tk.Button(left_panel_inner, text="Abrir Archivos CSV", command=self.open_files, bg="gray", fg="white")
+        self.open_button.pack(pady=10, padx=10)
 
-        self.analyze_button = tk.Button(left_panel, text="Analizar Señal", command=self.analyze_signals, bg="gray", fg="white")
-        self.analyze_button.pack(pady=10, padx=10, fill=tk.X)
+        self.analyze_button = tk.Button(left_panel_inner, text="Analizar Señal", command=self.analyze_signals, bg="gray", fg="white")
+        self.analyze_button.pack(pady=10, padx=10)
 
-        self.export_button = tk.Button(left_panel, text="Descargar Informe", command=self.export_report, bg="gray", fg="white")
-        self.export_button.pack(pady=10, padx=10, fill=tk.X)
+        self.export_button = tk.Button(left_panel_inner, text="Descargar Informe", command=self.export_report, bg="gray", fg="white")
+        self.export_button.pack(pady=10, padx=10)
 
-        # Crear filtros para frecuencia y fecha
-        self.freq_filter_label = tk.Label(left_panel, text="Filtro de Frecuencia (Hz)", bg="black", fg="white")
+        # Crear filtros para frecuencia
+        self.freq_filter_label = tk.Label(left_panel_inner, text="Seleccione Frecuencia", bg="black", fg="white")
         self.freq_filter_label.pack(pady=5)
-        self.freq_filter_entry = tk.Entry(left_panel)
-        self.freq_filter_entry.pack(pady=5, padx=10, fill=tk.X)
+        self.freq_combobox = ttk.Combobox(left_panel_inner, state="readonly")
+        self.freq_combobox.pack(pady=5, padx=10)
 
-        self.date_filter_label = tk.Label(left_panel, text="Filtro de Fecha", bg="black", fg="white")
+        self.apply_freq_button = tk.Button(left_panel_inner, text="Aplicar Filtro Frecuencia", command=self.apply_freq_filter, bg="gray", fg="white")
+        self.apply_freq_button.pack(pady=10, padx=10)
+
+        # Crear filtros para fecha
+        self.date_filter_label = tk.Label(left_panel_inner, text="Seleccione Fecha", bg="black", fg="white")
         self.date_filter_label.pack(pady=5)
-        self.date_filter_entry = tk.Entry(left_panel)
-        self.date_filter_entry.pack(pady=5, padx=10, fill=tk.X)
+        self.date_filter_entry = DateEntry(left_panel_inner, date_pattern='yyyy-mm-dd')
+        self.date_filter_entry.pack(pady=5, padx=10)
+
+        self.apply_date_button = tk.Button(left_panel_inner, text="Aplicar Filtro Fecha", command=self.apply_date_filter, bg="gray", fg="white")
+        self.apply_date_button.pack(pady=10, padx=10)
 
         # Crear el panel derecho para mostrar los resultados
         self.results_frame = tk.Frame(main_frame)
@@ -51,50 +64,74 @@ class RFAnalyzerApp:
         self.files = filedialog.askopenfilenames(filetypes=[("CSV files", "*.csv")])
         if self.files:
             messagebox.showinfo("Archivos Cargados", f"Se han cargado {len(self.files)} archivos.")
+            self.load_frequencies()
+
+    def load_frequencies(self):
+        # Cargar frecuencias de los archivos para el filtro
+        try:
+            all_frequencies = set()
+            for file in self.files:
+                df = pd.read_csv(file)
+                frequencies = df.iloc[:, 0].values
+                all_frequencies.update(frequencies)
+            self.freq_combobox['values'] = sorted(list(all_frequencies))
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al cargar frecuencias: {str(e)}")
+
+    def apply_freq_filter(self):
+        # Aplicar filtro de frecuencia basado en el valor seleccionado
+        selected_freq = self.freq_combobox.get()
+        if selected_freq:
+            self.selected_freq = float(selected_freq)
+            messagebox.showinfo("Filtro Aplicado", f"Filtro de Frecuencia: {self.selected_freq} Hz")
+        else:
+            self.selected_freq = None
+
+    def apply_date_filter(self):
+        # Aplicar filtro de fecha basado en el valor seleccionado
+        selected_date = self.date_filter_entry.get_date()
+        self.selected_date = selected_date.strftime('%Y-%m-%d')
+        messagebox.showinfo("Filtro Aplicado", f"Filtro de Fecha: {self.selected_date}")
 
     def analyze_signals(self):
         if not self.files:
             messagebox.showwarning("Advertencia", "No se han cargado archivos.")
             return
 
-        freq_filter = self.freq_filter_entry.get().strip()
-        date_filter = self.date_filter_entry.get().strip()
-
         results = []
         for file in self.files:
             try:
                 df = pd.read_csv(file)
-                
-                # Asegurarse de que la primera columna es de frecuencias
                 frequencies = df.iloc[:, 0].values
-                timestamps = df.columns[1:]  # Nombres de las columnas de fechas y horas
+                timestamps = df.columns[1:]
 
                 for timestamp in timestamps:
-                    if date_filter and date_filter not in timestamp:
-                        continue  # Filtrar por fecha
+                    # Aplicar filtro de fecha
+                    if hasattr(self, 'selected_date') and self.selected_date not in timestamp:
+                        continue
 
                     amplitudes = df[timestamp].values
 
                     # Aplicar filtro de frecuencia
-                    freq_mask = np.ones_like(frequencies, dtype=bool)
-                    if freq_filter:
-                        try:
-                            freq_filter_value = float(freq_filter)
-                            freq_mask = (frequencies >= freq_filter_value - 100) & (frequencies <= freq_filter_value + 100)
-                        except ValueError:
-                            pass  # Si el filtro de frecuencia no es un número, se ignora
-
-                    filtered_frequencies = frequencies[freq_mask]
-                    filtered_amplitudes = amplitudes[freq_mask]
+                    if hasattr(self, 'selected_freq'):
+                        freq_mask = (frequencies == self.selected_freq)
+                        filtered_frequencies = frequencies[freq_mask]
+                        filtered_amplitudes = amplitudes[freq_mask]
+                    else:
+                        filtered_frequencies = frequencies
+                        filtered_amplitudes = amplitudes
 
                     # Ajustar dinámicamente window_length para evitar errores
-                    window_length = min(11, len(filtered_amplitudes) // 2 * 2 + 1)  # Debe ser impar y menor que el tamaño de los datos
-                    polyorder = min(2, window_length - 1)  # polyorder debe ser menor que window_length
+                    if len(filtered_amplitudes) < 3:
+                        continue
+
+                    window_length = min(11, len(filtered_amplitudes) // 2 * 2 + 1)
+                    polyorder = min(2, window_length - 1)
 
                     # Suavizado de la señal
                     smoothed_amplitudes = savgol_filter(filtered_amplitudes, window_length=window_length, polyorder=polyorder)
 
-                    # Cálculos de los parámetros
+                    # Caracterización de la Señal
                     central_freq_index = np.argmax(smoothed_amplitudes)
                     central_freq = filtered_frequencies[central_freq_index]
                     half_max = np.max(smoothed_amplitudes) - 3
@@ -121,16 +158,18 @@ class RFAnalyzerApp:
         if results:
             self.results_text.delete(1.0, tk.END)
             self.results_text.insert(tk.END, "\n".join(results))
-            self.results = results  # Guardar resultados para exportar
+            self.results = results
         else:
             messagebox.showinfo("Sin Resultados", "No se encontraron resultados para mostrar.")
 
     def calculate_snr(self, signal, noise_level):
+        # Cálculo de la relación señal-ruido (SNR)
         signal_power = np.max(signal)
         snr = 10 * np.log10(signal_power / noise_level)
         return snr
 
     def calculate_bandwidth(self, frequencies, amplitudes, half_max):
+        # Cálculo del ancho de banda (BW)
         indices = np.where(amplitudes > half_max)[0]
         if len(indices) > 0:
             bandwidth = frequencies[indices[-1]] - frequencies[indices[0]]
@@ -139,6 +178,7 @@ class RFAnalyzerApp:
         return bandwidth
 
     def export_report(self):
+        # Exportación del informe en PDF
         if hasattr(self, 'results') and self.results:
             try:
                 pdf = FPDF()
